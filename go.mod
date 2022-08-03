@@ -1,4 +1,4 @@
-module github.com/airbusgeo/godal
+module github.com/climacell/godal
 
 go 1.15
 
