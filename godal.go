@@ -3359,22 +3359,25 @@ func (cgc cgoContext) cPointer() *C.cctx {
 	return cgc.cctx
 }
 
+
 //frees the context and returns any error it may contain
 func (cgc cgoContext) close() error {
 	cgc.opts.free()
-	if cgc.cctx.errMessage != nil {
+	defer C.free(unsafe.Pointer(cgc.cctx))
+	// check if there is an error
+	if s := C.GoString(cgc.cctx.errMessage); s != "" {
 		/* debug code
 		if cgc.cctx.handlerIdx != 0 {
 			panic("bug!")
 		}
 		*/
 		defer C.free(unsafe.Pointer(cgc.cctx.errMessage))
-		return errors.New(C.GoString(cgc.cctx.errMessage))
+		return errors.New(s)
 	}
-	if cgc.cctx.handlerIdx != 0 {
-		defer unregisterErrorHandler(int(cgc.cctx.handlerIdx))
-		return getErrorHandler(int(cgc.cctx.handlerIdx)).err
-	}
-	C.free(unsafe.Pointer(cgc.cctx))
+	// Dead code path
+	// if cgc.cctx.handlerIdx != 0 {
+	// 	defer unregisterErrorHandler(int(cgc.cctx.handlerIdx))
+	// 	return getErrorHandler(int(cgc.cctx.handlerIdx)).err
+	// }
 	return nil
 }
