@@ -18,6 +18,8 @@ package godal
 type DriverName string
 
 const (
+	//Zarr
+	Zarr DriverName = "Zarr"
 	//GTiff GeoTIFF
 	GTiff DriverName = "GTiff"
 	//GeoJSON RFCxxxx geojson
@@ -52,6 +54,10 @@ type driverMapping struct {
 }
 
 var driverMappings = map[DriverName]driverMapping{
+	Zarr: {
+		rasterName:     "Zarr",
+		rasterRegister: "GDALRegister_Zarr",
+	},
 	GTiff: {
 		rasterName:     "GTiff",
 		rasterRegister: "GDALRegister_GTiff",
