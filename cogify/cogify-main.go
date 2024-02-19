@@ -9,9 +9,9 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/airbusgeo/cogger"
-	"github.com/airbusgeo/godal"
 	"github.com/airbusgeo/osio"
 	"github.com/airbusgeo/osio/gcs"
+	"github.com/climacell/godal"
 	"github.com/spf13/cobra"
 )
 

@@ -14,10 +14,12 @@
 
 package godal
 
-//DriverName is GDAL driver
+// DriverName is GDAL driver
 type DriverName string
 
 const (
+	//Zarr
+	Zarr DriverName = "Zarr"
 	//GTiff GeoTIFF
 	GTiff DriverName = "GTiff"
 	//GeoJSON RFCxxxx geojson
@@ -52,6 +54,10 @@ type driverMapping struct {
 }
 
 var driverMappings = map[DriverName]driverMapping{
+	Zarr: {
+		rasterName:     "Zarr",
+		rasterRegister: "GDALRegister_Zarr",
+	},
 	GTiff: {
 		rasterName:     "GTiff",
 		rasterRegister: "GDALRegister_GTiff",
@@ -128,7 +134,7 @@ type driversOpt struct {
 	drivers []string
 }
 
-//Drivers specifies the list of drivers that are allowed to try opening the dataset
+// Drivers specifies the list of drivers that are allowed to try opening the dataset
 func Drivers(drivers ...string) interface {
 	OpenOption
 } {
@@ -142,8 +148,8 @@ type driverOpenOption struct {
 	oo []string
 }
 
-//DriverOpenOption adds a list of Open Options (-oo switch) to the open command. Each keyval must
-//be provided in a "KEY=value" format
+// DriverOpenOption adds a list of Open Options (-oo switch) to the open command. Each keyval must
+// be provided in a "KEY=value" format
 func DriverOpenOption(keyval ...string) interface {
 	OpenOption
 	BuildVRTOption
