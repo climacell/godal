@@ -77,6 +77,12 @@ func TestCBuffer(t *testing.T) {
 	assert.Equal(t, 1, bufferType(buf).Size())
 	assert.Panics(t, func() { cBuffer(buf, 101) })
 
+	buf = make([]int8, 100)
+	_ = cBuffer(buf, 100)
+	assert.Equal(t, Int8, bufferType(buf))
+	assert.Equal(t, 1, bufferType(buf).Size())
+	assert.Panics(t, func() { cBuffer(buf, 101) })
+
 	buf = make([]int16, 100)
 	_ = cBuffer(buf, 100)
 	assert.Equal(t, Int16, bufferType(buf))
@@ -223,6 +229,19 @@ func TestCreate(t *testing.T) {
 	if st1.Size() == st2.Size() {
 		t.Errorf("sizes: %d/%d", st1.Size(), st2.Size())
 	}
+
+	ehc = eh()
+	tmpname3 := tempfile()
+	defer os.Remove(tmpname3)
+	ds, err = Create(GTiff, tmpname3, 1, Int8, 20, 20, ErrLogger(ehc.ErrorHandler))
+	if CheckMinVersion(3, 7, 0) {
+		assert.NoError(t, err)
+
+		err = ds.Close(ErrLogger(ehc.ErrorHandler))
+		assert.NoError(t, err)
+	} else {
+		assert.Error(t, err, "godal.Int8 is not supported with GDAL<3.7.0, but godal.Create did not return an error")
+	}
 }
 
 func TestRegisterDrivers(t *testing.T) {
@@ -232,10 +251,18 @@ func TestRegisterDrivers(t *testing.T) {
 	_, err := Open("testdata/test.img")
 	assert.Error(t, err)
 
-	_ = RegisterRaster(HFA)
-	_, ok = RasterDriver(HFA)
-	assert.True(t, ok)
+	hfa_err := RegisterRaster(HFA)
+	if hfa_err == nil { //HFA is not available by default with gdal >= 3.10
+		_, ok = RasterDriver(HFA)
+		assert.True(t, ok)
 
+		ds, err := Open("testdata/test.img")
+		assert.NoError(t, err)
+		ds.Close()
+	} else {
+		_, ok = RasterDriver(HFA)
+		assert.False(t, ok)
+	}
 	_, ok = VectorDriver(HFA)
 	assert.False(t, ok)
 
@@ -244,10 +271,6 @@ func TestRegisterDrivers(t *testing.T) {
 
 	_, ok = RasterDriver(GeoJSON)
 	assert.False(t, ok)
-
-	ds, err := Open("testdata/test.img")
-	assert.NoError(t, err)
-	ds.Close()
 
 	_, ok = RasterDriver("bazbaz")
 	assert.False(t, ok)
@@ -265,9 +288,7 @@ func TestRegisterDrivers(t *testing.T) {
 	_, ok = VectorDriver("Mapinfo File")
 	assert.True(t, ok)
 
-	runtimeVersion := Version()
-	supported := runtimeVersion.Major() > 3 ||
-		(runtimeVersion.Major() == 3 && runtimeVersion.Minor() >= 8)
+	supported := CheckMinVersion(3, 8, 0)
 
 	ehc := eh()
 	err = RegisterPlugin("foobarsljgsa", ErrLogger(ehc.ErrorHandler))
@@ -343,7 +364,7 @@ func TestConfigOptions(t *testing.T) {
 	//Create. withtout the configoption create() will fail
 	ds, err := Create(GTiff, tiffile, 1, Byte, 1024, 1024, CreationOption("INVALID_OPTION=TRUE"), ConfigOption("GDAL_VALIDATE_CREATION_OPTIONS=FALSE"))
 	assert.NoError(t, err)
-	_, _ = ds.CreateMaskBand(0x02) //tmpdir/testfile.msk
+	_, _ = ds.CreateMaskBand(0x02) //For gdal <3.9, this will create tmpdir/testfile.msk
 	_ = ds.Close()
 
 	//Open
@@ -395,7 +416,11 @@ func TestConfigOptions(t *testing.T) {
 	ds, _ = Open(tiffile, ConfigOption("GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR"))
 	_, err = ds.GeoTransform()
 	assert.Error(t, err)
-	assert.NotEqual(t, 0x02, ds.Bands()[0].MaskFlags())
+	if CheckMinVersion(3, 9, 0) {
+		assert.Equal(t, 0x02, ds.Bands()[0].MaskFlags()) //gdal 3.9+ will not create a separate mask file by default
+	} else {
+		assert.NotEqual(t, 0x02, ds.Bands()[0].MaskFlags())
+	}
 }
 
 func TestHistogram(t *testing.T) {
@@ -628,6 +653,8 @@ func TestStructure(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	AssertMinVersion(3, 0, 0)
+	assert.False(t, CheckMinVersion(99, 99, 99))
+	assert.True(t, CheckMinVersion(3, 0, 0))
 	assert.Panics(t, func() { AssertMinVersion(99, 99, 99) })
 }
 
@@ -1210,8 +1237,7 @@ func TestBandMask(t *testing.T) {
 }
 
 func TestSetNoData(t *testing.T) {
-	_ = RegisterRaster("HFA")
-	ds, _ := Open("testdata/test.img")
+	ds, _ := Open("testdata/test.tif")
 	err := ds.SetNoData(0.5)
 	if err == nil {
 		t.Error("err not raised")
@@ -1303,9 +1329,12 @@ func TestOpenUpdate(t *testing.T) {
 	}
 	uds, _ = Open(tt)
 	flags := uds.Bands()[0].MaskFlags()
-	if flags != 0x8 {
-		t.Errorf("mask was used: %d", flags)
+	if CheckMinVersion(3, 9, 0) {
+		assert.Equal(t, 0x2, flags, "mask not set")
+	} else {
+		assert.Equal(t, 0x8, flags, "mask not being set from nodata values")
 	}
+
 	_ = uds.Close()
 	uds, _ = Open(tt, SiblingFiles(filepath.Base(tt+".msk")))
 	flags = uds.Bands()[0].MaskFlags()
@@ -1641,7 +1670,7 @@ func TestProjMisc(t *testing.T) {
 	attr, ok := sr.AttrValue("GEOGCS", 0)
 	assert.True(t, ok)
 	assert.Equal(t, "WGS 84", attr)
-	attr, ok = sr.AttrValue("GEOGCS", 9999)
+	_, ok = sr.AttrValue("GEOGCS", 9999)
 	assert.False(t, ok)
 
 	err = sr.AutoIdentifyEPSG()
@@ -2517,6 +2546,109 @@ func TestVectorTranslate(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestExecuteSQL(t *testing.T) {
+	poly1Wkt := "POLYGON ((-72.573946 44.254648, -72.573946 44.255163, -72.573076 44.255163, -72.573076 44.254648, -72.573946 44.254648))"
+	poly2Wkt := "POLYGON ((-72.576558 44.25799, -72.576558 44.258213, -72.576064 44.258213, -72.576064 44.25799, -72.576558 44.25799))"
+	el := ErrLogger(eh().ErrorHandler)
+
+	sqld := DriverName("SQLite")
+	err := RegisterVector(sqld)
+	if err != nil {
+		panic(err)
+	}
+
+	ds, err := CreateVector(sqld, "/vsimem/test.db")
+	if err != nil {
+		panic(err)
+	}
+	defer ds.Close()
+
+	wgs84, _ := NewSpatialRef("EPSG:4326")
+	tl, err := ds.CreateLayer("test", wgs84, GTPolygon)
+	assert.NoError(t, err)
+
+	rs, err := ds.ExecuteSQL("SELECT 1", SQLiteDialect(), el)
+	assert.NoError(t, err)
+	err = rs.Close()
+	assert.NoError(t, err)
+
+	fc, err := tl.FeatureCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 0, fc)
+
+	ins := fmt.Sprintf("INSERT INTO test VALUES (1,'%s'), (2,'%s')", poly1Wkt, poly2Wkt)
+
+	err = ds.StartTransaction(el, EmulatedTx())
+	assert.NoError(t, err)
+
+	rs, err = ds.ExecuteSQL(ins, el, SQLiteDialect())
+	assert.NoError(t, err)
+	err = rs.Close(el)
+	assert.NoError(t, err)
+
+	err = ds.RollbackTransaction(el)
+	assert.NoError(t, err)
+
+	fc, _ = tl.FeatureCount()
+	assert.Equal(t, 0, fc)
+
+	err = ds.StartTransaction(el)
+	assert.NoError(t, err)
+
+	rs, err = ds.ExecuteSQL(ins, el)
+	assert.NoError(t, err)
+	err = rs.Close(el)
+	assert.NoError(t, err)
+
+	err = ds.CommitTransaction(el)
+	assert.NoError(t, err)
+
+	fc, _ = tl.FeatureCount()
+	assert.Equal(t, 2, fc)
+	g, _ := NewGeometryFromWKT("POINT (-72.57349970718771 44.25492684820907)", wgs84)
+
+	rs, err = ds.ExecuteSQL("SELECT * FROM test", SpatialFilter(g), SQLiteDialect(), el)
+	assert.NoError(t, err)
+	fc, _ = rs.FeatureCount()
+	assert.Equal(t, 1, fc)
+	err = rs.Close(el)
+	assert.NoError(t, err)
+
+	rs, err = ds.ExecuteSQL("SELECT * FROM test", OGRSQLDialect(), el)
+	assert.NoError(t, err)
+	fc, _ = rs.FeatureCount()
+	assert.Equal(t, 2, fc)
+	err = rs.Close(el)
+	assert.NoError(t, err)
+
+	rs, err = ds.ExecuteSQL("SELECT * FROM test", IndirectSQLiteDialect(), el)
+	assert.NoError(t, err)
+	fc, _ = rs.FeatureCount()
+	assert.Equal(t, 2, fc)
+	err = rs.Close(el)
+	assert.NoError(t, err)
+
+	err = rs.Close()
+	assert.NoError(t, err)
+
+	// test error handling
+
+	rs, err = ds.ExecuteSQL("SELECT * FROM i_do_not_exist", el)
+	assert.Nil(t, rs)
+	assert.Error(t, err)
+
+	err = ds.RollbackTransaction(el)
+	assert.Error(t, err)
+
+	err = ds.CommitTransaction(el)
+	assert.Error(t, err)
+
+	err = ds.StartTransaction(el)
+	assert.NoError(t, err)
+	err = ds.StartTransaction(el)
+	assert.Error(t, err)
+}
+
 func TestVectorLayer(t *testing.T) {
 	rds, _ := Create(Memory, "", 3, Byte, 10, 10)
 	_, err := rds.CreateLayer("ff", nil, GTPolygon)
@@ -2677,6 +2809,11 @@ func TestLayerModifyFeatures(t *testing.T) {
 	ds, _ := Open("testdata/test.geojson") //read-only
 	defer ds.Close()
 	l := ds.Layers()[0]
+
+	ehc := eh()
+	err := l.SetGeometryColumnName("error", ErrLogger(ehc.ErrorHandler)) // can't set geometry colum name on geojson
+	assert.Error(t, err)
+
 	for {
 		ff := l.NextFeature()
 		if ff == nil {
@@ -2696,6 +2833,14 @@ func TestLayerModifyFeatures(t *testing.T) {
 	dsm, _ := ds.VectorTranslate("", []string{"-of", "Memory"})
 	defer dsm.Close()
 	l = dsm.Layers()[0]
+
+	err = l.SetGeometryColumnName("no_error_after_3.6")
+	if !CheckMinVersion(3, 6, 0) {
+		assert.Error(t, err)
+	} else {
+		assert.NoError(t, err)
+	}
+
 	for {
 		ff := l.NextFeature()
 		if ff == nil {
@@ -3066,7 +3211,15 @@ func TestFeatureAttributes(t *testing.T) {
 	assert.NoError(t, err)
 	fc, _ := lyr.FeatureCount()
 	assert.Equal(t, fc, 1)
-	nf.SetGeometryColumnName("no_error")
+
+	ehc = eh()
+	err = nf.SetGeometryColumnName("no_error_before_3_9", ErrLogger(ehc.ErrorHandler))
+	if !CheckMinVersion(3, 9, 0) {
+		assert.NoError(t, err)
+	} else {
+		assert.Error(t, err)
+	}
+
 	nf.SetFID(99999999999)
 	attrs := nf.Fields()
 	intCol := attrs["intCol"]
@@ -3308,6 +3461,18 @@ func (mvp mvpHandler) ReadAtMulti(k string, buf [][]byte, off []int64) ([]int, e
 		return nil, syscall.ENOENT
 	}
 	return b.(KeyMultiReader).ReadAtMulti(k, buf, off)
+}
+
+func TestHasVSIHandler(t *testing.T) { // stripPrefix false
+	assert.False(t, HasVSIHandler("unregistered_prefix://"))
+
+	vpa := vpHandler{datas: make(map[string]KeySizerReaderAt)}
+	err := RegisterVSIHandler("registered_prefix://", vpa, VSIHandlerStripPrefix(false))
+	assert.NoError(t, err)
+	assert.True(t, HasVSIHandler("registered_prefix://"))
+
+	// unregistered_prefix
+	assert.False(t, HasVSIHandler("unregistered_prefix://"))
 }
 
 func TestVSIPrefix(t *testing.T) {
@@ -3918,16 +4083,15 @@ func TestStatistics(t *testing.T) {
 	assert.Equal(t, 10., stats.Mean)
 	assert.Equal(t, 0.29, stats.Std)
 	assert.Equal(t, false, stats.Approximate)
-	runtimeVersion := Version()
 	err = ds.ClearStatistics()
-	if runtimeVersion.Major() <= 3 && runtimeVersion.Minor() < 2 {
+	if !CheckMinVersion(3, 2, 0) {
 		assert.Error(t, err)
 	} else {
 		assert.NoError(t, err)
 	}
 	ehc = eh()
 	err = ds.ClearStatistics(ErrLogger(ehc.ErrorHandler))
-	if runtimeVersion.Major() <= 3 && runtimeVersion.Minor() < 2 {
+	if !CheckMinVersion(3, 2, 0) {
 		assert.Error(t, err)
 	} else {
 		assert.NoError(t, err)
