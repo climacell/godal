@@ -172,7 +172,7 @@ typedef void (*fn_def)(void);
 
 int _go_registerDriver(const char *driver, const char *prefix) {
 	char *fnname = (char*)calloc(1,strlen(driver)+strlen(prefix)+1);
-	sprintf(fnname,"%s%s",prefix,driver);
+	snprintf(fnname, sizeof(fnname), "%s%s", prefix, driver);
 	void *fcn = dlsym(RTLD_DEFAULT,fnname);
 	free(fnname);
 	if (fcn != nullptr) {
@@ -816,6 +816,29 @@ void godalLayerSetFeature(cctx *ctx, OGRLayerH layer, OGRFeatureH feat) {
 	godalUnwrap();
 }
 
+void godalLayerSetGeometryColumnName(cctx *ctx, OGRLayerH layer, char *name) {
+	godalWrap(ctx);
+#if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 6, 0)
+	OGRGeomFieldDefnH fieldWithNewName = OGR_GFld_Create(name, OGRwkbGeometryType(0));
+	OGRErr gret = OGR_L_AlterGeomFieldDefn(layer, 0, fieldWithNewName, ALTER_GEOM_FIELD_DEFN_NAME_FLAG);
+	if(gret!=0){
+		forceOGRError(ctx,gret);
+	}
+#else
+  	CPLError(CE_Failure, CPLE_NotSupported, "OGR_L_AlterGeomFieldDefn is only supported in GDAL version >= 3.6");
+#endif
+	godalUnwrap();
+}
+
+void godalFeatureSetGeometryColumnName(cctx *ctx, OGRFeatureH feat, char *name) {
+	godalWrap(ctx);
+	OGRGeomFieldDefnH gfdef = OGR_F_GetGeomFieldDefnRef(feat, 0);
+	if(gfdef != nullptr){
+		OGR_GFld_SetName(gfdef, name);
+	}
+	godalUnwrap();
+}
+
 void godalFeatureSetGeometry(cctx *ctx, OGRFeatureH feat, OGRGeometryH geom) {
 	godalWrap(ctx);
 	OGRErr gret = OGR_F_SetGeometry(feat,geom);
@@ -979,6 +1002,47 @@ OGRLayerH godalCopyLayer(cctx *ctx, GDALDatasetH ds, OGRLayerH layer, char *name
 	}
 	godalUnwrap();
 	return ret;
+}
+
+OGRLayerH godalDatasetExecuteSQL(cctx *ctx, GDALDatasetH ds, char *sql, OGRGeometryH filter, char *dialect) {
+	godalWrap(ctx);
+	OGRLayerH ret = GDALDatasetExecuteSQL(ds, sql, filter, dialect);
+	//a NULL return value is not always an error
+	godalUnwrap();
+	return ret;
+}
+
+void godalReleaseResultSet(cctx *ctx, GDALDatasetH ds, OGRLayerH rs) {
+	godalWrap(ctx);
+	GDALDatasetReleaseResultSet(ds,rs);
+	godalUnwrap();
+}
+
+void godalStartTransaction(cctx *ctx, GDALDatasetH ds, int bForce) {
+	godalWrap(ctx);
+	OGRErr gret = GDALDatasetStartTransaction(ds,bForce);
+    if (gret != OGRERR_NONE) {
+        forceOGRError(ctx,gret);
+    }
+	godalUnwrap();
+}
+
+void godalDatasetRollbackTransaction(cctx *ctx, GDALDatasetH ds) {
+	godalWrap(ctx);
+	OGRErr gret = GDALDatasetRollbackTransaction(ds);
+    if (gret != OGRERR_NONE) {
+        forceOGRError(ctx,gret);
+    }
+	godalUnwrap();
+}
+
+void godalCommitTransaction(cctx *ctx, GDALDatasetH ds) {
+	godalWrap(ctx);
+	OGRErr gret = GDALDatasetCommitTransaction(ds);
+    if (gret != OGRERR_NONE) {
+        forceOGRError(ctx,gret);
+    }
+	godalUnwrap();
 }
 
 void godalLayerGetExtent(cctx *ctx, OGRLayerH layer, OGREnvelope *envelope) {
@@ -1366,7 +1430,7 @@ namespace cpl
 							   ) override;
 
 		int Stat(const char *pszFilename, VSIStatBufL *pStatBuf, int nFlags) override;
-#if GDAL_VERSION_NUM >= 3020000
+#if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 2, 0)
         char **SiblingFiles(const char *pszFilename) override;
 #endif
         int HasOptimizedReadMultiRange(const char *pszPath) override;
@@ -1380,17 +1444,22 @@ namespace cpl
     {
         CPL_DISALLOW_COPY_ASSIGN(VSIGoHandle)
     private:
-        char *m_filename;
-        vsi_l_offset m_cur, m_size;
-        int m_eof;
-
+        char *m_filename = nullptr;
+        vsi_l_offset m_cur = 0;
+        vsi_l_offset m_size = 0;
+        int m_eof = 0;
+        bool m_bError = false;
     public:
         VSIGoHandle(const char *filename, vsi_l_offset size);
         ~VSIGoHandle() override;
 
-#if GDAL_VERSION_NUM >= 3060000
-		  bool HasPRead() const override;
-		  size_t PRead(void * /*pBuffer*/, size_t /* nSize */, vsi_l_offset /*nOffset*/) const override;
+#if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 6, 0)
+        bool HasPRead() const override;
+        size_t PRead(void * /*pBuffer*/, size_t /* nSize */, vsi_l_offset /*nOffset*/) const override;
+#endif
+#if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 10, 0)
+        void ClearErr() override;
+        int Error() override;
 #endif
         vsi_l_offset Tell() override;
         int Seek(vsi_l_offset nOffset, int nWhence) override;
@@ -1407,8 +1476,6 @@ namespace cpl
     VSIGoHandle::VSIGoHandle(const char *filename, vsi_l_offset size)
     {
         m_filename = strdup(filename);
-        m_cur = 0;
-        m_eof = 0;
         m_size = size;
     }
 
@@ -1420,16 +1487,19 @@ namespace cpl
     size_t VSIGoHandle::Write(const void *pBuffer, size_t nSize, size_t nCount)
     {
         CPLError(CE_Failure, CPLE_AppDefined, "Write not implemented for go handlers");
+        m_bError = true;
         return -1;
     }
     int VSIGoHandle::Flush() 
     {
         CPLError(CE_Failure, CPLE_AppDefined, "Flush not implemented for go handlers");
+        m_bError = true;
         return -1;
     }
     int VSIGoHandle::Truncate(vsi_l_offset nNewSize) 
     {
         CPLError(CE_Failure, CPLE_AppDefined, "Truncate not implemented for go handlers");
+        m_bError = true;
         return -1;
     }
     int VSIGoHandle::Seek(vsi_l_offset nOffset, int nWhence)
@@ -1478,6 +1548,7 @@ namespace cpl
             CPLError(CE_Failure, CPLE_AppDefined, "%s", err);
             errno = EIO;
             free(err);
+            m_bError = true;
             return 0;
         }
         if (read != nSize * nCount)
@@ -1489,28 +1560,38 @@ namespace cpl
         return readblocks;
     }
 
-#if GDAL_VERSION_NUM >= 3060000
-	 bool VSIGoHandle::HasPRead() const
-	 {
-		 return true;
-	 }
-	 size_t VSIGoHandle::PRead( void* pBuffer, size_t nSize, vsi_l_offset nOffset ) const
-	 {
-		 char *err = nullptr;
-		 _gogdalMultiReadCallback(m_filename, 1, &pBuffer, (void *)&nOffset, (void *)&nSize,
-														&err);
-		 if (err)
-		 {
-			 CPLError(CE_Failure, CPLE_AppDefined, "%s", err);
-			 errno = EIO;
-			 free(err);
-			 return 0;
-		 }
-		 return nSize;
-	 }
+#if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 6, 0)
+    bool VSIGoHandle::HasPRead() const
+    {
+        return true;
+    }
+    size_t VSIGoHandle::PRead( void* pBuffer, size_t nSize, vsi_l_offset nOffset ) const
+    {
+        char *err = nullptr;
+        _gogdalMultiReadCallback(m_filename, 1, &pBuffer, (void *)&nOffset, (void *)&nSize, &err);
+        if (err)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined, "%s", err);
+            errno = EIO;
+            free(err);
+            return 0;
+        }
+        return nSize;
+    }
+#endif
+#if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 10, 0)
+    void VSIGoHandle::ClearErr()
+    {
+        m_bError = false;
+    }
+
+    int VSIGoHandle::Error()
+    {
+        return m_bError ? TRUE : FALSE;
+    }
 #endif
 
-	 int VSIGoHandle::ReadMultiRange(int nRanges, void **ppData, const vsi_l_offset *panOffsets, const size_t *panSizes)
+    int VSIGoHandle::ReadMultiRange(int nRanges, void **ppData, const vsi_l_offset *panOffsets, const size_t *panSizes)
     {
         int iRange;
         int nMergedRanges = 1;
@@ -1530,6 +1611,7 @@ namespace cpl
                 CPLError(CE_Failure, CPLE_AppDefined, "%s", err);
                 errno = EIO;
                 free(err);
+                m_bError = true;
                 return -1;
             }
             return ret;
@@ -1586,6 +1668,7 @@ namespace cpl
             CPLError(CE_Failure, CPLE_AppDefined, "%s", err);
             errno = EIO;
             free(err);
+            m_bError = true;
             ret = -1;
         }
 
@@ -1612,15 +1695,15 @@ namespace cpl
     }
     VSIGoFilesystemHandler::~VSIGoFilesystemHandler() {}
 
-	VSIVirtualHandle *VSIGoFilesystemHandler::Open(const char *pszFilename,
-												   const char *pszAccess,
-												   bool bSetError
+    VSIVirtualHandle *VSIGoFilesystemHandler::Open(const char *pszFilename,
+                                                   const char *pszAccess,
+                                                   bool bSetError
 #if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 3, 0)
-												   , CSLConstList /*papszOptions*/
+                                                   , CSLConstList /*papszOptions*/
 #endif
-	)
-	{
-		if (strchr(pszAccess, 'w') != NULL ||
+    )
+    {
+        if (strchr(pszAccess, 'w') != NULL ||
             strchr(pszAccess, '+') != NULL)
         {
             CPLError(CE_Failure, CPLE_AppDefined, "Only read-only mode is supported");
@@ -1646,9 +1729,9 @@ namespace cpl
         {
             return VSICreateCachedFile(new VSIGoHandle(pszFilename, s), m_buffer, m_cache);
         }
-	}
+    }
 
-	int VSIGoFilesystemHandler::Stat(const char *pszFilename,
+    int VSIGoFilesystemHandler::Stat(const char *pszFilename,
                                      VSIStatBufL *pStatBuf,
                                      int nFlags)
     {
@@ -1678,7 +1761,7 @@ namespace cpl
         return TRUE;
     }
 
-#if GDAL_VERSION_NUM >= 3020000
+#if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 2, 0)
     char **VSIGoFilesystemHandler::SiblingFiles(const char *pszFilename)
     {
         return (char **)calloc(1, sizeof(char *));
@@ -1687,29 +1770,38 @@ namespace cpl
 
 } // namespace cpl
 
-void VSIInstallGoHandler(cctx *ctx, const char *pszPrefix, size_t bufferSize, size_t cacheSize)
+int godalVSIHasGoHandler(const char *pszPrefix)
 {
-	godalWrap(ctx);
     CSLConstList papszPrefix = VSIFileManager::GetPrefixes();
     for( size_t i = 0; papszPrefix && papszPrefix[i]; ++i ) {
         if(strcmp(papszPrefix[i],pszPrefix)==0) {
-            CPLError(CE_Failure, CPLE_AppDefined, "handler already registered on prefix");
-			godalUnwrap();
-			return;
+            return TRUE;
         }
+    }
+    return FALSE;
+}
+
+void godalVSIInstallGoHandler(cctx *ctx, const char *pszPrefix, size_t bufferSize, size_t cacheSize)
+{
+    bool alreadyExists = godalVSIHasGoHandler(pszPrefix) != 0;
+    godalWrap(ctx);
+    if (alreadyExists) {
+        CPLError(CE_Failure, CPLE_AppDefined, "handler already registered on prefix");
+        godalUnwrap();
+        return;
     }
     VSIFilesystemHandler *poHandler = new cpl::VSIGoFilesystemHandler(bufferSize, cacheSize);
     const std::string sPrefix(pszPrefix);
     VSIFileManager::InstallHandler(sPrefix, poHandler);
-	godalUnwrap();
+    godalUnwrap();
 }
 
 void test_godal_error_handling(cctx *ctx) {
-	godalWrap(ctx);
-	CPLDebug("godal","this is a debug message");
-	CPLError(CE_Warning, CPLE_AppDefined, "this is a warning message");
-	CPLError(CE_Failure, CPLE_AppDefined, "this is a failure message");
-	godalUnwrap();
+    godalWrap(ctx);
+    CPLDebug("godal","this is a debug message");
+    CPLError(CE_Warning, CPLE_AppDefined, "this is a warning message");
+    CPLError(CE_Failure, CPLE_AppDefined, "this is a failure message");
+    godalUnwrap();
 }
 
 void godalGridCreate(cctx *ctx, char *pszAlgorithm, GDALGridAlgorithm eAlgorithm, GUInt32 nPoints, const double *padfX, const double *padfY, const double *padfZ, double dfXMin,
@@ -1724,6 +1816,10 @@ void godalGridCreate(cctx *ctx, char *pszAlgorithm, GDALGridAlgorithm eAlgorithm
 	}
 
 	void *ppOptions;
+//#define __STRINGIFY(TEXT) #TEXT
+//#define __WARNING(TEXT) __STRINGIFY(GCC warning TEXT)
+//#define WARNING(VALUE) __WARNING(__STRINGIFY(N = VALUE))
+//_Pragma (WARNING(GDAL_VERSION_NUM))
 #if GDAL_VERSION_NUM >= GDAL_COMPUTE_VERSION(3, 7, 0)
 	ret = GDALGridParseAlgorithmAndOptions(pszAlgorithm, &eAlgorithm, &ppOptions);
 #else

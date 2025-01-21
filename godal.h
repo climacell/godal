@@ -27,6 +27,12 @@
 	#error "this code is only compatible with gdal version >= 3.0"
 #endif
 
+#if GDAL_VERSION_NUM < GDAL_COMPUTE_VERSION(3, 7, 0)
+typedef enum {
+    /*! 8-bit signed integer (GDAL >= 3.7) */ GDT_Int8 = 14
+} FutureGDALDataType;
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -104,6 +110,8 @@ extern "C" {
 	void godalLayerCreateFeature(cctx *ctx, OGRLayerH layer, OGRFeatureH feat);
 	OGRFeatureH godalLayerNewFeature(cctx *ctx, OGRLayerH layer, OGRGeometryH geom);
 	void godalLayerDeleteFeature(cctx *ctx, OGRLayerH layer, OGRFeatureH feat);
+	void godalLayerSetGeometryColumnName(cctx *ctx, OGRLayerH layer, char *name);
+	void godalFeatureSetGeometryColumnName(cctx *ctx, OGRFeatureH feat, char *name);
 	void godalFeatureSetGeometry(cctx *ctx, OGRFeatureH feat, OGRGeometryH geom);
 	void godalFeatureSetFieldInteger(cctx *ctx, OGRFeatureH feat, int fieldIndex, int value);
 	void godalFeatureSetFieldInteger64(cctx *ctx, OGRFeatureH feat, int fieldIndex, long long value);
@@ -117,7 +125,13 @@ extern "C" {
 	void godalFeatureSetFieldBinary(cctx *ctx, OGRFeatureH feat, int fieldIndex, int nbBytes, void *value);
 	OGRLayerH godalCreateLayer(cctx *ctx, GDALDatasetH ds, char *name, OGRSpatialReferenceH sr, OGRwkbGeometryType gtype);
 	OGRLayerH godalCopyLayer(cctx *ctx, GDALDatasetH ds, OGRLayerH layer, char *name);
-	void VSIInstallGoHandler(cctx *ctx, const char *pszPrefix, size_t bufferSize, size_t cacheSize);
+	OGRLayerH godalDatasetExecuteSQL(cctx *ctx, GDALDatasetH ds, char *sql, OGRGeometryH filter, char *dialect);
+	void godalReleaseResultSet(cctx *ctx, GDALDatasetH ds, OGRLayerH rs);
+	void godalStartTransaction(cctx *ctx, GDALDatasetH ds, int bForce);
+	void godalDatasetRollbackTransaction(cctx *ctx, GDALDatasetH ds);
+	void godalCommitTransaction(cctx *ctx, GDALDatasetH ds);
+	int godalVSIHasGoHandler(const char *pszPrefix);
+	void godalVSIInstallGoHandler(cctx *ctx, const char *pszPrefix, size_t bufferSize, size_t cacheSize);
 
 	void godalGetColorTable(GDALRasterBandH bnd, GDALPaletteInterp *interp, int *nEntries, short **entries);
 	void godalSetColorTable(cctx *ctx, GDALRasterBandH bnd, GDALPaletteInterp interp, int nEntries, short *entries);

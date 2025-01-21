@@ -134,6 +134,7 @@ func ErrLogger(fn ErrorHandler) interface {
 	SetNoDataOption
 	SetScaleOffsetOption
 	SetGeoTransformOption
+	SetGeometryColumnNameOption
 	SetProjectionOption
 	SetSpatialRefOption
 	SieveFilterOption
@@ -156,6 +157,11 @@ func ErrLogger(fn ErrorHandler) interface {
 	SetGCPsOption
 	GCPsToGeoTransformOption
 	RegisterPluginOption
+	ExecuteSQLOption
+	StartTransactionOption
+	CloseResultSetOption
+	RollbackTransactionOption
+	CommitTransactionOption
 } {
 	return errorCallback{fn}
 }
@@ -239,6 +245,9 @@ func (ec errorCallback) setFillnodataOpt(o *fillnodataOpts) {
 	o.errorHandler = ec.fn
 }
 func (ec errorCallback) setGeojsonOpt(o *geojsonOpts) {
+	o.errorHandler = ec.fn
+}
+func (ec errorCallback) setGeometryColumnNameOpt(o *setGeometryColumnNameOpts) {
 	o.errorHandler = ec.fn
 }
 func (ec errorCallback) setGeometryTransformOpt(o *geometryTransformOpts) {
@@ -386,6 +395,26 @@ func (ec errorCallback) setGCPsToGeoTransformOpts(o *gcpsToGeoTransformOpts) {
 	o.errorHandler = ec.fn
 }
 func (ec errorCallback) setRegisterPluginOpt(o *registerPluginOpts) {
+	o.errorHandler = ec.fn
+}
+
+func (ec errorCallback) setExecuteSQLOpt(o *executeSQLOpts) {
+	o.errorHandler = ec.fn
+}
+
+func (ec errorCallback) setReleaseResultSetOpt(o *closeResultSetOpts) {
+	o.errorHandler = ec.fn
+}
+
+func (ec errorCallback) setStartTransactionOpt(o *startTransactionOpts) {
+	o.errorHandler = ec.fn
+}
+
+func (ec errorCallback) setRollbackTransactionOpt(o *rollbackTransactionOpts) {
+	o.errorHandler = ec.fn
+}
+
+func (ec errorCallback) setCommitTransactionOpt(o *commitTransactionOpts) {
 	o.errorHandler = ec.fn
 }
 
