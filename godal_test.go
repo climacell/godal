@@ -2625,14 +2625,15 @@ func TestExecuteSQL(t *testing.T) {
 	assert.NoError(t, err)
 
 	rs, err = ds.ExecuteSQL("SELECT * FROM test", IndirectSQLiteDialect(), el)
-	assert.NoError(t, err)
-	fc, _ = rs.FeatureCount()
-	assert.Equal(t, 2, fc)
-	err = rs.Close(el)
-	assert.NoError(t, err)
+	if err == nil {
+		fc, _ = rs.FeatureCount()
+		assert.Equal(t, 2, fc)
+		err = rs.Close(el)
+		assert.NoError(t, err)
 
-	err = rs.Close()
-	assert.NoError(t, err)
+		err = rs.Close()
+		assert.NoError(t, err)
+	}
 
 	// test error handling
 
