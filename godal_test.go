@@ -266,6 +266,9 @@ func TestRegisterDrivers(t *testing.T) {
 	_, ok = VectorDriver(HFA)
 	assert.False(t, ok)
 
+	err = RegisterVector(GeoJSON)
+	assert.NoError(t, err)
+
 	_, ok = VectorDriver(GeoJSON)
 	assert.True(t, ok)
 
@@ -334,13 +337,13 @@ func TestVectorCreate(t *testing.T) {
 	tf = tempfile()
 	defer os.Remove(tf)
 	ds, err := CreateVector(GeoJSON, tf)
-	driver := ds.Driver()
-	assert.Equal(t, "GeoJSON", driver.LongName())
-	assert.Equal(t, "GeoJSON", driver.ShortName())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ds.Close()
+	driver := ds.Driver()
+	assert.Equal(t, "GeoJSON", driver.LongName())
+	assert.Equal(t, "GeoJSON", driver.ShortName())
 	st := ds.Structure()
 	if st.DataType != Unknown || st.NBands > 0 {
 		t.Errorf("created raster %v", st)
