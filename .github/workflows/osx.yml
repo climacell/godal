@@ -10,6 +10,9 @@ jobs:
   osx:
     runs-on: macOS-latest
     name: macOS test
+    # brew has no gdal >= 3.13 bottle yet, and --HEAD builds break whenever the
+    # upstream formula does. Non-blocking until brew ships a 3.13 bottle.
+    continue-on-error: true
     env:
       GOEXPERIMENT: cgocheck2
     steps:

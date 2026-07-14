@@ -2624,16 +2624,11 @@ func TestExecuteSQL(t *testing.T) {
 	err = rs.Close(el)
 	assert.NoError(t, err)
 
+	// GDAL >= 3.13 rejects INDIRECT_SQLITE on SQLite datasources whose geometry
+	// column is stored as WKT TEXT ("Unexpected data type for geometry column")
 	rs, err = ds.ExecuteSQL("SELECT * FROM test", IndirectSQLiteDialect(), el)
-	if err == nil {
-		fc, _ = rs.FeatureCount()
-		assert.Equal(t, 2, fc)
-		err = rs.Close(el)
-		assert.NoError(t, err)
-
-		err = rs.Close()
-		assert.NoError(t, err)
-	}
+	assert.Nil(t, rs)
+	assert.Error(t, err)
 
 	// test error handling
 
@@ -2655,9 +2650,14 @@ func TestExecuteSQL(t *testing.T) {
 
 func TestVectorLayer(t *testing.T) {
 	rds, _ := Create(Memory, "", 3, Byte, 10, 10)
-	_, _ = rds.CreateLayer("ff", nil, GTPolygon)
+	// GDAL >= 3.11 unified the MEM driver: raster datasets accept vector layers,
+	// including duplicate layer names
+	_, err := rds.CreateLayer("ff", nil, GTPolygon)
+	assert.NoError(t, err)
 	ehc := eh()
-	_, _ = rds.CreateLayer("ff", nil, GTPolygon, ErrLogger(ehc.ErrorHandler))
+	_, err = rds.CreateLayer("ff", nil, GTPolygon, ErrLogger(ehc.ErrorHandler))
+	assert.NoError(t, err)
+	assert.Len(t, rds.Layers(), 2)
 
 	rds.Close()
 	tmpname := tempfile()
@@ -4847,9 +4847,12 @@ func TestSetGCPsInvalidDataset(t *testing.T) {
 		t.Error(err)
 	}
 
+	// GDAL >= 3.11 unified the MEM driver: vector MEM datasets accept GCPs
 	ehc := eh()
-	_ = vrtDs.SetGCPs([]GCP{}, GCPProjection(srWkt), ErrLogger(ehc.ErrorHandler))
-	_ = vrtDs.SetGCPs([]GCP{}, GCPProjection(srWkt))
+	err = vrtDs.SetGCPs([]GCP{}, GCPProjection(srWkt), ErrLogger(ehc.ErrorHandler))
+	assert.NoError(t, err)
+	err = vrtDs.SetGCPs([]GCP{}, GCPProjection(srWkt))
+	assert.NoError(t, err)
 }
 
 func TestSetGCPs2AddTwoGCPs(t *testing.T) {
@@ -4950,9 +4953,12 @@ func TestSetGCPs2InvalidDataset(t *testing.T) {
 	}
 	defer vrtDs.Close()
 
+	// GDAL >= 3.11 unified the MEM driver: vector MEM datasets accept GCPs
 	ehc := eh()
-	_ = vrtDs.SetGCPs([]GCP{}, GCPSpatialRef(&SpatialRef{}), ErrLogger(ehc.ErrorHandler))
-	_ = vrtDs.SetGCPs([]GCP{}, GCPSpatialRef(&SpatialRef{}))
+	err = vrtDs.SetGCPs([]GCP{}, GCPSpatialRef(&SpatialRef{}), ErrLogger(ehc.ErrorHandler))
+	assert.NoError(t, err)
+	err = vrtDs.SetGCPs([]GCP{}, GCPSpatialRef(&SpatialRef{}))
+	assert.NoError(t, err)
 }
 
 func TestGCPsToGeoTransformEmptyList(t *testing.T) {
