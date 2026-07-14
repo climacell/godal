@@ -72,8 +72,11 @@ jobs:
         uses: shogo82148/actions-goveralls@v1
         with:
           path-to-profile: profile.cov
+      # lint only on PRs: reviewdog filters findings to changed lines there;
+      # on push events it reports the repo's entire pre-existing lint debt
+      # and fails the job.
       - name: staticcheck
-        if: ${{ matrix.go == '1.23' && matrix.gdal == 'release/3.13' }}
+        if: ${{ github.event_name == 'pull_request' && matrix.go == '1.23' && matrix.gdal == 'release/3.13' }}
         uses: reviewdog/action-staticcheck@v1
         env:
           PKG_CONFIG_PATH: /optgdal/lib/pkgconfig/
@@ -81,7 +84,7 @@ jobs:
           level: error
           fail_on_error: true
       - name: golangci-lint
-        if: ${{ matrix.go == '1.23' && matrix.gdal == 'release/3.13' }}
+        if: ${{ github.event_name == 'pull_request' && matrix.go == '1.23' && matrix.gdal == 'release/3.13' }}
         uses: reviewdog/action-golangci-lint@v2
         env:
           PKG_CONFIG_PATH: /optgdal/lib/pkgconfig/
