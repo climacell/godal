@@ -8,24 +8,32 @@ on:
 
 jobs:
   osx:
-    # Disabled: brew has no gdal >= 3.13 bottle yet, and --HEAD builds break
-    # whenever the upstream formula does, leaving a permanent red X on PRs.
-    # Re-enable (drop this `if`) once `brew install gdal` provides >= 3.13.
-    if: false
     runs-on: macOS-latest
     name: macOS test
     env:
       GOEXPERIMENT: cgocheck2
     steps:
-      - name: install gdal
-        run: |
-          brew install pkg-config proj geos
-          brew install --HEAD gdal
       - name: Checkout
         uses: actions/checkout@v4
+      # brew has no gdal >= 3.13 bottle yet and --HEAD builds break on upstream
+      # formula issues, so install GDAL from conda-forge instead.
+      - name: install gdal (conda-forge)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: gdalenv
+          create-args: >-
+            libgdal-core>=3.13
+            pkg-config
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
       - name: Tests
-        run: go test . -race
+        shell: bash -el {0}
+        run: |
+          export PKG_CONFIG_PATH="$CONDA_PREFIX/lib/pkgconfig"
+          export CGO_LDFLAGS="-Wl,-rpath,$CONDA_PREFIX/lib"
+          export DYLD_FALLBACK_LIBRARY_PATH="$CONDA_PREFIX/lib"
+          export PROJ_DATA="$CONDA_PREFIX/share/proj"
+          gdal-config --version
+          go test . -race
