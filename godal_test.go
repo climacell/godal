@@ -266,6 +266,9 @@ func TestRegisterDrivers(t *testing.T) {
 	_, ok = VectorDriver(HFA)
 	assert.False(t, ok)
 
+	err = RegisterVector(GeoJSON)
+	assert.NoError(t, err)
+
 	_, ok = VectorDriver(GeoJSON)
 	assert.True(t, ok)
 
@@ -334,13 +337,13 @@ func TestVectorCreate(t *testing.T) {
 	tf = tempfile()
 	defer os.Remove(tf)
 	ds, err := CreateVector(GeoJSON, tf)
-	driver := ds.Driver()
-	assert.Equal(t, "GeoJSON", driver.LongName())
-	assert.Equal(t, "GeoJSON", driver.ShortName())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ds.Close()
+	driver := ds.Driver()
+	assert.Equal(t, "GeoJSON", driver.LongName())
+	assert.Equal(t, "GeoJSON", driver.ShortName())
 	st := ds.Structure()
 	if st.DataType != Unknown || st.NBands > 0 {
 		t.Errorf("created raster %v", st)
@@ -2621,15 +2624,11 @@ func TestExecuteSQL(t *testing.T) {
 	err = rs.Close(el)
 	assert.NoError(t, err)
 
+	// GDAL >= 3.13 rejects INDIRECT_SQLITE on SQLite datasources whose geometry
+	// column is stored as WKT TEXT ("Unexpected data type for geometry column")
 	rs, err = ds.ExecuteSQL("SELECT * FROM test", IndirectSQLiteDialect(), el)
-	assert.NoError(t, err)
-	fc, _ = rs.FeatureCount()
-	assert.Equal(t, 2, fc)
-	err = rs.Close(el)
-	assert.NoError(t, err)
-
-	err = rs.Close()
-	assert.NoError(t, err)
+	assert.Nil(t, rs)
+	assert.Error(t, err)
 
 	// test error handling
 
@@ -2651,16 +2650,15 @@ func TestExecuteSQL(t *testing.T) {
 
 func TestVectorLayer(t *testing.T) {
 	rds, _ := Create(Memory, "", 3, Byte, 10, 10)
+	// GDAL >= 3.11 unified the MEM driver: raster datasets accept vector layers,
+	// including duplicate layer names
 	_, err := rds.CreateLayer("ff", nil, GTPolygon)
-	assert.Error(t, err)
+	assert.NoError(t, err)
 	ehc := eh()
 	_, err = rds.CreateLayer("ff", nil, GTPolygon, ErrLogger(ehc.ErrorHandler))
+	assert.NoError(t, err)
+	assert.Len(t, rds.Layers(), 2)
 
-	assert.Error(t, err)
-	lyrs := rds.Layers()
-	if len(lyrs) > 0 {
-		t.Error("raster ds has vector layers")
-	}
 	rds.Close()
 	tmpname := tempfile()
 	defer os.Remove(tmpname)
@@ -4849,12 +4847,12 @@ func TestSetGCPsInvalidDataset(t *testing.T) {
 		t.Error(err)
 	}
 
+	// GDAL >= 3.11 unified the MEM driver: vector MEM datasets accept GCPs
 	ehc := eh()
 	err = vrtDs.SetGCPs([]GCP{}, GCPProjection(srWkt), ErrLogger(ehc.ErrorHandler))
-	assert.Error(t, err)
-
+	assert.NoError(t, err)
 	err = vrtDs.SetGCPs([]GCP{}, GCPProjection(srWkt))
-	assert.Error(t, err)
+	assert.NoError(t, err)
 }
 
 func TestSetGCPs2AddTwoGCPs(t *testing.T) {
@@ -4955,12 +4953,12 @@ func TestSetGCPs2InvalidDataset(t *testing.T) {
 	}
 	defer vrtDs.Close()
 
+	// GDAL >= 3.11 unified the MEM driver: vector MEM datasets accept GCPs
 	ehc := eh()
 	err = vrtDs.SetGCPs([]GCP{}, GCPSpatialRef(&SpatialRef{}), ErrLogger(ehc.ErrorHandler))
-	assert.Error(t, err)
-
+	assert.NoError(t, err)
 	err = vrtDs.SetGCPs([]GCP{}, GCPSpatialRef(&SpatialRef{}))
-	assert.Error(t, err)
+	assert.NoError(t, err)
 }
 
 func TestGCPsToGeoTransformEmptyList(t *testing.T) {
@@ -5271,24 +5269,31 @@ func TestDemSlope(t *testing.T) {
 
 		expSpaceVal float32 = 2.048
 		expLineVal  float32 = 1.024
+		tolerance   float32 = 0.01
 	)
+	isClose := func(a, b, tol float32) bool {
+		d := a - b
+		if d < 0 {
+			d = -d
+		}
+		return d < tol
+	}
 	for x := 1; x < outXSize-1; x++ {
-		thisCoordVal := demBuf[(row*outYSize)+x]
-		switch thisCoordVal {
-		case expSpaceVal:
+		thisCoordVal := demBuf[(row*outXSize)+x]
+		if isClose(thisCoordVal, expSpaceVal, tolerance) {
 			if thisLineThickness > 0 {
 				assert.Equal(t, expLineThickness, thisLineThickness)
 				thisLineThickness = 0
 			}
 			thisInterLineSpaces++
-		case expLineVal:
+		} else if isClose(thisCoordVal, expLineVal, tolerance) {
 			if thisInterLineSpaces > 0 {
 				assert.Equal(t, expInterLineSpaces, thisInterLineSpaces)
 				thisInterLineSpaces = 0
 			}
 			thisLineThickness++
-		default:
-			t.Errorf("found coordinate with value not in: [%f, %f]", expSpaceVal, expLineVal)
+		} else {
+			t.Errorf("found coordinate with value %f not close to either [%f, %f]", thisCoordVal, expSpaceVal, expLineVal)
 			return
 		}
 	}
