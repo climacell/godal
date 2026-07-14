@@ -8,11 +8,12 @@ on:
 
 jobs:
   osx:
+    # Disabled: brew has no gdal >= 3.13 bottle yet, and --HEAD builds break
+    # whenever the upstream formula does, leaving a permanent red X on PRs.
+    # Re-enable (drop this `if`) once `brew install gdal` provides >= 3.13.
+    if: false
     runs-on: macOS-latest
     name: macOS test
-    # brew has no gdal >= 3.13 bottle yet, and --HEAD builds break whenever the
-    # upstream formula does. Non-blocking until brew ships a 3.13 bottle.
-    continue-on-error: true
     env:
       GOEXPERIMENT: cgocheck2
     steps:
